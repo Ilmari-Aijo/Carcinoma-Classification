@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Clasificador de Carcinoma</title>
+</head>
+<body>
+  <h1>Clasificador de Carcinoma Ductal Invasivo</h1>
+
+  <form id="upload-form">
+    <input type="file" id="file-input" accept="image/*" required>
+    <button type="submit">Analizar imagen</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById("upload-form");
+    const resultDiv = document.getElementById("result");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const fileInput = document.getElementById("file-input");
+      const file = fileInput.files[0];
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      resultDiv.textContent = "Analizando...";
+
+      try {
+        const response = await fetch("/predict", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error("Error del servidor: " + response.status);
+        }
+
+        const data = await response.json();
+
+        resultDiv.innerHTML = `
+          <p><strong>Clase predicha:</strong> ${data.predicted_class}</p>
+          <p><strong>Probabilidad de carcinoma:</strong> ${data.probability_carcinoma}</p>
+          <p><strong>Probabilidad de normal:</strong> ${data.probability_normal}</p>
+        `;
+      } catch (error) {
+        resultDiv.textContent = "Ocurrió un error: " + error.message;
+      }
+    });
+  </script>
+</body>
+</html>
