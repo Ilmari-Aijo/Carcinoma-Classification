@@ -1,53 +1,102 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Clasificador de Carcinoma</title>
+  <title>IDC Classifier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-  <h1>Clasificador de Carcinoma Ductal Invasivo</h1>
+<body class="bg-gray-50 min-h-screen p-6 md:p-10 text-gray-800">
+  <div class="max-w-md mx-auto">
 
-  <form id="upload-form">
-    <input type="file" id="file-input" accept="image/*" required>
-    <button type="submit">Analizar imagen</button>
-  </form>
+    <h1 class="text-2xl font-bold mb-1">IDC Classifier</h1>
+    <p class="text-sm text-gray-500 mb-5">
+      Upload a histopathology patch image (50x50 px) to classify it as carcinoma or normal tissue.
+    </p>
 
-  <div id="result"></div>
+    <form id="upload-form" class="rounded-lg border border-gray-200 bg-white shadow-sm p-4 mb-5">
+      <input
+        type="file"
+        id="file-input"
+        accept="image/*"
+        required
+        class="block w-full text-sm text-gray-600 mb-4
+               file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0
+               file:text-sm file:font-semibold file:bg-gray-900 file:text-white
+               hover:file:bg-gray-700"
+      />
+      <button
+        type="submit"
+        class="w-full bg-gray-900 text-white text-sm font-medium py-2 rounded-lg hover:bg-gray-700 transition"
+      >
+        Classify
+      </button>
+    </form>
+
+    <div id="result"></div>
+
+    <a href="gallery.html" class="inline-block mt-6 text-sm text-blue-600 hover:underline">
+      View patient gallery
+    </a>
+  </div>
 
   <script>
-    const form = document.getElementById("upload-form");
-    const resultDiv = document.getElementById("result");
+    function capitalize(word) {
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }
 
-    form.addEventListener("submit", async (event) => {
+    function renderResult(data) {
+      const isCarcinoma = data.predicted_class === 'carcinoma';
+      const badgeColor = isCarcinoma
+        ? 'bg-red-100 text-red-700 border-red-300'
+        : 'bg-emerald-100 text-emerald-700 border-emerald-300';
+      const pct = (data.probability_carcinoma * 100).toFixed(1);
+
+      document.getElementById('result').innerHTML = `
+        <div class="rounded-lg border border-gray-200 bg-white shadow-sm p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm text-gray-500">Model's prediction</span>
+            <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${badgeColor}">
+              ${capitalize(data.predicted_class)}
+            </span>
+          </div>
+          <div class="mb-1 flex justify-between text-xs text-gray-500">
+            <span>Probability of carcinoma</span>
+            <span>${pct}%</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-gray-200 overflow-hidden">
+            <div class="h-full bg-red-500" style="width: ${pct}%"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    document.getElementById('upload-form').addEventListener('submit', async (event) => {
       event.preventDefault();
 
-      const fileInput = document.getElementById("file-input");
-      const file = fileInput.files[0];
+      const fileInput = document.getElementById('file-input');
+      if (!fileInput.files.length) return;
 
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append('file', fileInput.files[0]);
 
-      resultDiv.textContent = "Analizando...";
+      document.getElementById('result').innerHTML =
+        '<p class="text-sm text-gray-500">Classifying...</p>';
 
       try {
-        const response = await fetch("/predict", {
-          method: "POST",
+        const response = await fetch('/predict', {
+          method: 'POST',
           body: formData,
         });
 
         if (!response.ok) {
-          throw new Error("Error del servidor: " + response.status);
+          throw new Error(`Server responded with status ${response.status}`);
         }
 
         const data = await response.json();
-
-        resultDiv.innerHTML = `
-          <p><strong>Clase predicha:</strong> ${data.predicted_class}</p>
-          <p><strong>Probabilidad de carcinoma:</strong> ${data.probability_carcinoma}</p>
-          <p><strong>Probabilidad de normal:</strong> ${data.probability_normal}</p>
-        `;
+        renderResult(data);
       } catch (error) {
-        resultDiv.textContent = "Ocurrió un error: " + error.message;
+        document.getElementById('result').innerHTML =
+          `<p class="text-sm text-red-600">Error while classifying: ${error.message}</p>`;
       }
     });
   </script>

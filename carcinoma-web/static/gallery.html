@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Patient Gallery - IDC Classifier</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-6 md:p-10 text-gray-800">
+  <div class="max-w-5xl mx-auto">
+
+    <h1 class="text-2xl font-bold mb-1">Patient Gallery</h1>
+    <p class="text-sm text-gray-500 mb-5">
+      Choose a patient from the test set, then click a region with tissue to classify it.
+    </p>
+
+    <!-- Patient picker: full width, above the image + sidebar row -->
+    <div id="patient-list" class="flex flex-wrap gap-2 mb-4"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-[auto_280px] gap-6 items-start">
+
+      <!-- Left column: image -->
+      <div>
+        <div id="canvas-wrapper" class="relative rounded-lg overflow-hidden border border-gray-200 shadow-sm bg-white max-w-md">
+          <canvas id="baseCanvas" class="w-full h-auto block"></canvas>
+          <canvas id="overlayCanvas" class="absolute inset-0 w-full h-auto cursor-crosshair"></canvas>
+        </div>
+
+        <a href="index.html" class="inline-block mt-4 text-sm text-blue-600 hover:underline">
+          Back to manual upload classifier
+        </a>
+      </div>
+
+      <!-- Right column: info board + prediction result -->
+      <div class="space-y-4">
+
+        <div class="rounded-lg border border-gray-200 bg-white shadow-sm p-4">
+          <h2 class="text-sm font-semibold text-gray-700 mb-3">Patient info</h2>
+          <dl class="text-sm text-gray-600 space-y-2">
+            <div class="flex justify-between gap-2">
+              <dt class="text-gray-400">Patient ID</dt>
+              <dd id="info-patient" class="font-medium">-</dd>
+            </div>
+            <div class="flex justify-between gap-2">
+              <dt class="text-gray-400">Grid size</dt>
+              <dd id="info-grid" class="font-medium">-</dd>
+            </div>
+            <div class="flex justify-between gap-2">
+              <dt class="text-gray-400">Tissue coverage</dt>
+              <dd id="info-coverage" class="font-medium">-</dd>
+            </div>
+            <div class="flex justify-between gap-2">
+              <dt class="text-gray-400">Hovered cell</dt>
+              <dd id="info-hover" class="font-medium">-</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div id="result"></div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PATCH_SIZE = 50;
+
+    let manifest = null;
+    let currentImage = null;
+    let validCells = new Map(); // key "row,col" -> real label (0/1)
+
+    async function init() {
+      const response = await fetch('gallery/manifest.json');
+      manifest = await response.json();
+
+      const listEl = document.getElementById('patient-list');
+
+      for (const patientId of Object.keys(manifest)) {
+        const btn = document.createElement('button');
+        btn.textContent = patientId;
+        btn.className = patientBtnClass(false);
+        btn.addEventListener('click', () => selectPatient(patientId, btn));
+        listEl.appendChild(btn);
+      }
+
+      const firstPatientId = Object.keys(manifest)[0];
+      const firstBtn = listEl.querySelector('button');
+      selectPatient(firstPatientId, firstBtn);
+    }
+
+    function patientBtnClass(active) {
+      const base = 'patient-btn px-3 py-1.5 rounded-full text-sm font-medium border transition';
+      return active
+        ? `${base} border-gray-900 bg-gray-900 text-white`
+        : `${base} border-gray-300 bg-white hover:bg-gray-100`;
+    }
+
+    function selectPatient(patientId, buttonEl) {
+      document.querySelectorAll('.patient-btn').forEach((b) => {
+        b.className = patientBtnClass(false);
+      });
+      buttonEl.className = patientBtnClass(true);
+
+      const info = manifest[patientId];
+
+      validCells = new Map();
+      for (const cell of info.cells) {
+        validCells.set(`${cell.row},${cell.col}`, cell.label);
+      }
+
+      const totalCells = info.grid_width * info.grid_height;
+      const coveragePct = ((info.cells.length / totalCells) * 100).toFixed(0);
+
+      document.getElementById('info-patient').textContent = patientId;
+      document.getElementById('info-grid').textContent =
+        `${info.grid_width}x${info.grid_height} cells`;
+      document.getElementById('info-coverage').textContent =
+        `${info.cells.length}/${totalCells} (${coveragePct}%)`;
+      document.getElementById('info-hover').textContent = '-';
+
+      const img = new Image();
+      img.onload = () => {
+        currentImage = img;
+
+        const baseCanvas = document.getElementById('baseCanvas');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+
+        baseCanvas.width = img.width;
+        baseCanvas.height = img.height;
+        overlayCanvas.width = img.width;
+        overlayCanvas.height = img.height;
+
+        baseCanvas.getContext('2d').drawImage(img, 0, 0);
+        clearOverlay();
+      };
+      img.src = `gallery/${info.image}`;
+
+      document.getElementById('result').innerHTML = '';
+    }
+
+    function clearOverlay() {
+      const overlayCanvas = document.getElementById('overlayCanvas');
+      const ctx = overlayCanvas.getContext('2d');
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+
+    function getCellFromEvent(event) {
+      const overlayCanvas = document.getElementById('overlayCanvas');
+      const rect = overlayCanvas.getBoundingClientRect();
+
+      // The canvas's internal pixel size (e.g. 1500x1500) can differ from
+      // how big it's actually displayed on screen (we cap it with
+      // max-w-md), so the mouse position has to be rescaled to the
+      // canvas's real pixel grid before computing row/col.
+      const scaleX = overlayCanvas.width / rect.width;
+      const scaleY = overlayCanvas.height / rect.height;
+
+      const x = (event.clientX - rect.left) * scaleX;
+      const y = (event.clientY - rect.top) * scaleY;
+
+      return {
+        row: Math.floor(y / PATCH_SIZE),
+        col: Math.floor(x / PATCH_SIZE),
+      };
+    }
+
+    function highlightCell(row, col, isValid) {
+      clearOverlay();
+      const overlayCanvas = document.getElementById('overlayCanvas');
+      const ctx = overlayCanvas.getContext('2d');
+
+      ctx.fillStyle = isValid ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.25)';
+      ctx.fillRect(col * PATCH_SIZE, row * PATCH_SIZE, PATCH_SIZE, PATCH_SIZE);
+    }
+
+    function capitalize(word) {
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }
+
+    function renderResult(data, realLabel) {
+      const isCarcinoma = data.predicted_class === 'carcinoma';
+      const matches = data.predicted_class === realLabel;
+
+      const badgeColor = isCarcinoma
+        ? 'bg-red-100 text-red-700 border-red-300'
+        : 'bg-emerald-100 text-emerald-700 border-emerald-300';
+
+      const pct = (data.probability_carcinoma * 100).toFixed(1);
+
+      const matchBadge = matches
+        ? '<span class="text-emerald-600 font-medium">&#10003; Matches the real label</span>'
+        : '<span class="text-red-600 font-medium">&#10007; Does not match the real label</span>';
+
+      document.getElementById('result').innerHTML = `
+        <div class="rounded-lg border border-gray-200 bg-white shadow-sm p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm text-gray-500">Model's prediction</span>
+            <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${badgeColor}">
+              ${capitalize(data.predicted_class)}
+            </span>
+          </div>
+
+          <div class="mb-1 flex justify-between text-xs text-gray-500">
+            <span>Probability of carcinoma</span>
+            <span>${pct}%</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-gray-200 overflow-hidden mb-3">
+            <div class="h-full bg-red-500" style="width: ${pct}%"></div>
+          </div>
+
+          <div class="text-sm text-gray-600 flex items-center justify-between flex-wrap gap-1">
+            <span>Real label in dataset: <strong>${capitalize(realLabel)}</strong></span>
+            ${matchBadge}
+          </div>
+        </div>
+      `;
+    }
+
+    async function classifyCell(row, col) {
+      const px = col * PATCH_SIZE;
+      const py = row * PATCH_SIZE;
+
+      // Temporary 50x50 canvas to crop ONLY that patch, pixel for pixel,
+      // straight from the original image already loaded in memory
+      // (currentImage), not from the on-screen (possibly scaled) canvas.
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = PATCH_SIZE;
+      cropCanvas.height = PATCH_SIZE;
+      cropCanvas.getContext('2d').drawImage(
+        currentImage,
+        px, py, PATCH_SIZE, PATCH_SIZE,
+        0, 0, PATCH_SIZE, PATCH_SIZE
+      );
+
+      cropCanvas.toBlob(async (blob) => {
+        const formData = new FormData();
+        formData.append('file', blob, 'patch.png');
+
+        document.getElementById('result').innerHTML =
+          '<p class="text-sm text-gray-500">Classifying...</p>';
+
+        try {
+          const response = await fetch('/predict', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await response.json();
+
+          const realLabel = validCells.get(`${row},${col}`) === 1 ? 'carcinoma' : 'normal';
+          renderResult(data, realLabel);
+        } catch (error) {
+          document.getElementById('result').innerHTML =
+            `<p class="text-sm text-red-600">Error while classifying: ${error.message}</p>`;
+        }
+      }, 'image/png');
+    }
+
+    const overlayCanvasEl = document.getElementById('overlayCanvas');
+
+    overlayCanvasEl.addEventListener('mousemove', (event) => {
+      const { row, col } = getCellFromEvent(event);
+      const isValid = validCells.has(`${row},${col}`);
+      highlightCell(row, col, isValid);
+      document.getElementById('info-hover').textContent =
+        `row ${row}, col ${col}${isValid ? '' : ' (no tissue)'}`;
+    });
+
+    overlayCanvasEl.addEventListener('mouseleave', () => {
+      clearOverlay();
+      document.getElementById('info-hover').textContent = '-';
+    });
+
+    overlayCanvasEl.addEventListener('click', (event) => {
+      const { row, col } = getCellFromEvent(event);
+      if (validCells.has(`${row},${col}`)) {
+        classifyCell(row, col);
+      } else {
+        document.getElementById('result').innerHTML =
+          '<p class="text-sm text-gray-500">This cell has no real tissue (it\'s a blank area in the composite).</p>';
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

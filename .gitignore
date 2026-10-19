@@ -3,3 +3,4 @@ carcinoma-web/__pycache__/
 *.pyc
 carcinoma-web/models/*.keras
 .env
+carcinoma-web/static/gallery_initial/
